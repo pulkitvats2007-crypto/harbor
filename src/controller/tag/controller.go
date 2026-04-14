@@ -118,8 +118,12 @@ func (c *controller) Ensure(ctx context.Context, repositoryID, artifactID int64,
 		tag.PushTime = time.Now()
 		tagID, err = c.Create(ctx, tag)
 		return err
-	})(orm.SetTransactionOpNameToContext(ctx, "tx-tag-ensure")); err != nil && !errors.IsConflictErr(err) {
-		return 0, err
+	})(orm.SetTransactionOpNameToContext(ctx, "tx-tag-ensure")); err != nil {
+		if !errors.IsConflictErr(err) {
+			return 0, err
+		}
+		// The tag was created concurrently, retry Ensure to fetch and update it
+		return c.Ensure(ctx, repositoryID, artifactID, name)
 	}
 
 	return tagID, nil

@@ -106,6 +106,32 @@ func (c *controllerTestSuite) TestEnsureTag() {
 	_, err = c.ctl.Ensure(orm.NewContext(nil, &ormtesting.FakeOrmer{}), 1, 1, "latest")
 	c.Require().Nil(err)
 	c.tagMgr.AssertExpectations(c.T())
+
+	// reset the mock
+	c.SetupTest()
+
+	// the tag doesn't exist initially, but creation fails with a conflict error (concurrent creation).
+	// the retry will list the newly created tag and update it.
+	c.tagMgr.On("List", mock.Anything, mock.Anything).Return([]*tag.Tag{}, nil).Once() // First List returns empty
+	c.tagMgr.On("Create", mock.Anything, mock.Anything).Return(int64(0), errors.ConflictError(nil)).Once() // Create fails with conflict
+	c.tagMgr.On("List", mock.Anything, mock.Anything).Return([]*tag.Tag{ // Second List (retry) returns the concurrently created tag
+		{
+			ID:           1,
+			RepositoryID: 1,
+			ArtifactID:   2,
+			Name:         "latest",
+		},
+	}, nil).Once()
+	c.tagMgr.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	c.artMgr.On("Get", mock.Anything, mock.Anything).Return(&pkg_artifact.Artifact{
+		ID: 1,
+	}, nil).Twice() // Called for first list and retry
+	mock.OnAnything(c.immutableMtr, "Match").Return(false, nil)
+
+	tagID, err := c.ctl.Ensure(orm.NewContext(nil, &ormtesting.FakeOrmer{}), 1, 1, "latest")
+	c.Require().Nil(err)
+	c.Equal(int64(1), tagID)
+	c.tagMgr.AssertExpectations(c.T())
 }
 
 func (c *controllerTestSuite) TestCount() {
